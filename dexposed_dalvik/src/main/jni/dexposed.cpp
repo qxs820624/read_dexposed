@@ -151,10 +151,19 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
         return result;
     }
 
+    //初始化某个指针，不知道用来干嘛
     initTypePointers();
+
+    //输出机器信息
     dexposedInfo();
+
+    //检查是否在跑Dalvik
     keepLoadingDexposed = isRunningDalvik();
+
+    //初始化一些操作
     keepLoadingDexposed = dexposedOnVmCreated(env, NULL);
+
+    //绑定一些方法
     initNative(env, NULL);
 
     return JNI_VERSION_1_6;
@@ -167,6 +176,7 @@ bool dexposedOnVmCreated(JNIEnv* env, const char* className) {
         return false;
 
     // disable some access checks
+    // 处理一些checks?
     patchReturnTrue((uintptr_t) &dvmCheckClassAccess);
     patchReturnTrue((uintptr_t) &dvmCheckFieldAccess);
     patchReturnTrue((uintptr_t) &dvmInSamePackage);
@@ -184,6 +194,7 @@ bool dexposedOnVmCreated(JNIEnv* env, const char* className) {
         return false;
     }
 
+    //绑定方法
     ALOGI("Found Dexposed class '%s', now initializing\n", DEXPOSED_CLASS);
     if (register_com_taobao_android_dexposed_DexposedBridge(env) != JNI_OK) {
         ALOGE("Could not register natives for '%s'\n", DEXPOSED_CLASS);
@@ -221,6 +232,8 @@ static jboolean initNative(JNIEnv* env, jclass clazz) {
         keepLoadingDexposed = false;
         return false;
     }
+
+    //设置这个JAVA方法的JNI实现；
     dvmSetNativeFunc(dexposedInvokeOriginalMethodNative, com_taobao_android_dexposed_DexposedBridge_invokeOriginalMethodNative, NULL);
 
     Method* dexposedInvokeSuperNative = (Method*) env->GetStaticMethodID(dexposedClass, "invokeSuperNative",
@@ -232,6 +245,8 @@ static jboolean initNative(JNIEnv* env, jclass clazz) {
         keepLoadingDexposed = false;
         return false;
     }
+
+    //设置这个JAVA方法的JNI实现；
     dvmSetNativeFunc(dexposedInvokeSuperNative, com_taobao_android_dexposed_DexposedBridge_invokeSuperNative, NULL);
 
     objectArrayClass = dvmFindArrayClass("[Ljava/lang/Object;", NULL);
@@ -298,12 +313,14 @@ static void dexposedCallHandler(const u4* args, JValue* pResult, const Method* m
         return;
     }
 
+    //还原各种备份
     DexposedHookInfo* hookInfo = (DexposedHookInfo*) method->insns;
     Method* original = (Method*) hookInfo;
     Object* originalReflected = hookInfo->reflectedMethod;
     Object* additionalInfo = hookInfo->additionalInfo;
   
     // convert/box arguments
+    // 获取参数符号
     const char* desc = &method->shorty[1]; // [0] is the return type.
     Object* thisObject = NULL;
     size_t srcIndex = 0;
@@ -319,7 +336,8 @@ static void dexposedCallHandler(const u4* args, JValue* pResult, const Method* m
     if (argsArray == NULL) {
         return;
     }
-    
+
+    // 把参数一个个塞进数组
     while (*desc != '\0') {
         char descChar = *(desc++);
         JValue value;
@@ -359,7 +377,8 @@ static void dexposedCallHandler(const u4* args, JValue* pResult, const Method* m
     JValue result;
     dvmCallMethod(self, dexposedHandleHookedMethod, NULL, &result,
         originalReflected, (int) original, additionalInfo, thisObject, argsArray);
-        
+
+    //释放链接
     dvmReleaseTrackedAlloc((Object *)argsArray, self);
 
     // exceptions are thrown to the caller
@@ -367,6 +386,7 @@ static void dexposedCallHandler(const u4* args, JValue* pResult, const Method* m
         return;
     }
 
+    // 处理返回值
     // return result with proper type
     ClassObject* returnType = dvmGetBoxedReturnType(method);
     if (returnType->primitiveType == PRIM_VOID) {
@@ -426,13 +446,17 @@ static void patchReturnTrue(uintptr_t function) {
 static void com_taobao_android_dexposed_DexposedBridge_hookMethodNative(JNIEnv* env, jclass clazz, jobject reflectedMethodIndirect,
             jobject declaredClassIndirect, jint slot, jobject additionalInfoIndirect) {
     // Usage errors?
+    // 强壮型检测
     if (declaredClassIndirect == NULL || reflectedMethodIndirect == NULL) {
         dvmThrowIllegalArgumentException("method and declaredClass must not be null");
         return;
     }
     
     // Find the internal representation of the method
+    // 把java层的引用映射出来
     ClassObject* declaredClass = (ClassObject*) dvmDecodeIndirectRef(dvmThreadSelf(), declaredClassIndirect);
+
+    // 根据偏移量找到方法
     Method* method = dvmSlotToMethod(declaredClass, slot);
     if (method == NULL) {
         dvmThrowNoSuchMethodError("could not get internal representation for method");
@@ -445,6 +469,7 @@ static void com_taobao_android_dexposed_DexposedBridge_hookMethodNative(JNIEnv* 
     }
     
     // Save a copy of the original method and other hook info
+    // DexposedHookInfo是一个结构体，用来保存指针和方法的。根据结构体的内容可以知道结构体前面是一个method，所以可以直接使用memcpy
     DexposedHookInfo* hookInfo = (DexposedHookInfo*) calloc(1, sizeof(DexposedHookInfo));
     memcpy(hookInfo, method, sizeof(hookInfo->originalMethodStruct));
     hookInfo->reflectedMethod = dvmDecodeIndirectRef(dvmThreadSelf(), env->NewGlobalRef(reflectedMethodIndirect));
@@ -457,6 +482,7 @@ static void com_taobao_android_dexposed_DexposedBridge_hookMethodNative(JNIEnv* 
     method->registersSize = method->insSize;
     method->outsSize = 0;
 
+    //清除缓存
     if (PTR_gDvmJit != NULL) {
         // reset JIT cache
         MEMBER_VAL(PTR_gDvmJit, DvmJitGlobals, codeCacheFull) = true;

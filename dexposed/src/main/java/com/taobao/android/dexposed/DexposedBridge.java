@@ -103,7 +103,8 @@ public final class DexposedBridge {
 		if (!(hookMethod instanceof Method) && !(hookMethod instanceof Constructor<?>)) {
 			throw new IllegalArgumentException("only methods and constructors can be hooked");
 		}
-		
+
+		//函数可以有多个回调
 		boolean newMethod = false;
 		CopyOnWriteSortedSet<XC_MethodHook> callbacks;
 		synchronized (hookedMethodCallbacks) {
@@ -115,13 +116,19 @@ public final class DexposedBridge {
 			}
 		}
 		callbacks.add(callback);
+
 		if (newMethod) {
+
 			Class<?> declaringClass = hookMethod.getDeclaringClass();
 			if(runtime == RUNTIME_UNKNOW)  runtime = getRuntime();
+
+			//找到偏移量
 			int slot = (runtime == RUNTIME_DALVIK) ? (int) getIntField(hookMethod, "slot") : 0;
 
 			Class<?>[] parameterTypes;
 			Class<?> returnType;
+
+			//Hook的有可能是构造器
 			if (hookMethod instanceof Method) {
 				parameterTypes = ((Method) hookMethod).getParameterTypes();
 				returnType = ((Method) hookMethod).getReturnType();
@@ -131,6 +138,8 @@ public final class DexposedBridge {
 			}
 
 			AdditionalHookInfo additionalInfo = new AdditionalHookInfo(callbacks, parameterTypes, returnType);
+
+			//Todo 到native层进行Hook
 			hookMethodNative(hookMethod, declaringClass, slot, additionalInfo);
 		}
 		return callback.new Unhook(hookMethod);
@@ -160,12 +169,21 @@ public final class DexposedBridge {
 	}
 	
 	public static Unhook findAndHookMethod(Class<?> clazz, String methodName, Object... parameterTypesAndCallback) {
+		// TODO 入口在此
+
+		//强壮型
 		if (parameterTypesAndCallback.length == 0 || !(parameterTypesAndCallback[parameterTypesAndCallback.length-1] instanceof XC_MethodHook))
 			throw new IllegalArgumentException("no callback defined");
-		
+
+		//获取回调
 		XC_MethodHook callback = (XC_MethodHook) parameterTypesAndCallback[parameterTypesAndCallback.length-1];
+
+		//找到方法
 		Method m = XposedHelpers.findMethodExact(clazz, methodName, parameterTypesAndCallback);
+
+		//Hook!
 		Unhook unhook = hookMethod(m, callback);
+
 		if (!(callback instanceof XC_MethodKeepHook
 				|| callback instanceof XC_MethodKeepReplacement)) {
 			synchronized (allUnhookCallbacks) {
